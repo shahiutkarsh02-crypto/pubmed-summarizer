@@ -9,6 +9,7 @@ from summarize import (
     fetch_details,
     clean_abstract_text,
     summarize_with_claude,
+    save_summary_as_pdf,
 )
 
 load_dotenv()
@@ -71,3 +72,13 @@ if st.button("Search and Summarize"):
 
         st.markdown("### Summary")
         st.markdown(summary)
+
+        # --- PDF download button ---
+        pdf_path = save_summary_as_pdf(topic, summary)
+        with open(pdf_path, "rb") as f:
+            st.download_button(
+                label="📄 Download as PDF",
+                data=f,
+                file_name=pdf_path.split("/")[-1],
+                mime="application/pdf",
+            )

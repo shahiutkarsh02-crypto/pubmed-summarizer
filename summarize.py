@@ -89,17 +89,21 @@ def summarize_with_claude(topic, papers_text, num_papers):
     Send the raw PubMed text to Claude and ask for a clean,
     structured summary.
     """
-    prompt = f"""You are helping a pharmacy professional quickly understand
-recent research. Below are the {num_papers} most recent PubMed abstracts on the topic
-"{topic}".
+    prompt = f"""You are a clinical pharmacy research assistant helping a pharmacy
+professional quickly evaluate recent research. Below are the {num_papers} most
+recent PubMed abstracts on the topic "{topic}".
 
-For EACH paper, produce a short structured summary with these exact headings:
-- Title (short version)
-- Study Type & Size (e.g. retrospective cohort, 616 patients)
-- Key Findings (2-3 bullet points, plain language)
-- Relevance to "{topic}" (1 sentence)
+For EACH paper, produce a structured summary with these EXACT headings, in this order:
 
-Keep it concise and skip any paper that has no usable abstract text.
+- **Title** (short version)
+- **Evidence Level** (e.g. RCT, retrospective cohort, case report, systematic review, animal/in-vitro study — state clearly which)
+- **Study Size & Population** (number of patients/subjects, key population details like age range, comorbidities, if mentioned)
+- **Key Findings** (2-3 bullet points, plain language, include actual numbers/statistics where available)
+- **Adverse Events / Safety Signals** (mention any side effects, safety concerns, or drug interactions noted — write "None reported" if the abstract doesn't mention any)
+- **Study Limitations** (note anything that weakens confidence: small sample size, no control group, industry funding, single-center, short follow-up — write "Not stated" if the abstract gives no info on this)
+- **Relevance to "{topic}"** (1 sentence, practical takeaway for a pharmacy professional)
+
+If a paper has no usable abstract text, skip it and note "Abstract not available" instead of guessing.
 
 Here are the raw abstracts:
 
@@ -140,6 +144,39 @@ def save_summary(topic, summary):
         f.write(summary)
 
     print(f"\nSummary also saved to: {filename}")
+
+
+def save_summary_as_pdf(topic, summary):
+    """
+    Saves the summary as a clean, readable PDF file inside the
+    'summaries' folder, alongside the .txt version.
+    """
+    from fpdf import FPDF
+    import datetime
+
+    os.makedirs("summaries", exist_ok=True)
+
+    safe_topic = "".join(c if c.isalnum() or c == " " else "" for c in topic)
+    safe_topic = safe_topic.strip().replace(" ", "_")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+    filename = f"summaries/{safe_topic}_{timestamp}.pdf"
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.multi_cell(0, 10, "PubMed AI Summary")
+
+    pdf.set_font("Helvetica", "", 11)
+    pdf.multi_cell(0, 8, f"Topic: {topic}")
+    pdf.multi_cell(0, 8, f"Generated: {timestamp}")
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "", 11)
+    safe_summary = summary.encode("latin-1", "replace").decode("latin-1")
+    pdf.multi_cell(0, 7, safe_summary)
+
+    pdf.output(filename)
+    return filename
 
 
 def main():

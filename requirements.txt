@@ -2,3 +2,4 @@ streamlit
 requests
 anthropic
 python-dotenv
+fpdf2
