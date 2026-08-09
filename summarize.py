@@ -17,18 +17,19 @@ client = anthropic.Anthropic()  # it automatically reads ANTHROPIC_API_KEY
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 
 
-def search_pubmed(topic, max_results=5, years_back=None):
+def search_pubmed(topic, max_results=5, years_back=None, sort_by="date"):
     """
     Ask PubMed for the IDs of the most recent papers on 'topic'.
     If years_back is given (e.g. 2), only papers published in the
-    last N years are included.
+    last N years are included. sort_by controls result ordering
+    (PubMed values: "date", "relevance", "author", "journal").
     """
     search_url = BASE_URL + "esearch.fcgi"
     params = {
         "db": "pubmed",
         "term": topic,
         "retmax": max_results,
-        "sort": "date",
+        "sort": sort_by,
         "retmode": "json"
     }
 
@@ -57,6 +58,41 @@ def fetch_details(id_list):
     response = requests.get(fetch_url, params=params)
     return response.text
 
+def build_vancouver_citations(id_list):
+    """
+    Fetches basic citation info (authors, title, journal, year) for
+    each paper and formats them as Vancouver-style references —
+    the citation style most commonly used in medical/pharmacy writing.
+    """
+    fetch_url = BASE_URL + "esummary.fcgi"
+    params = {
+        "db": "pubmed",
+        "id": ",".join(id_list),
+        "retmode": "json"
+    }
+    response = requests.get(fetch_url, params=params)
+    data = response.json()
+
+    citations = []
+    for pid in id_list:
+        try:
+            item = data["result"][pid]
+            authors_list = item.get("authors", [])
+            author_names = ", ".join(a["name"] for a in authors_list[:3])
+            if len(authors_list) > 3:
+                author_names += ", et al"
+
+            title = item.get("title", "").rstrip(".")
+            journal = item.get("source", "")
+            pub_date = item.get("pubdate", "")
+            year = pub_date.split(" ")[0] if pub_date else ""
+
+            citation = f"{author_names}. {title}. {journal}. {year}. PMID: {pid}."
+            citations.append(citation)
+        except KeyError:
+            citations.append(f"[Citation unavailable for PMID {pid}]")
+
+    return citations
 
 def clean_abstract_text(raw_text):
     """

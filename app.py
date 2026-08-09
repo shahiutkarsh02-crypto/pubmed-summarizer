@@ -10,6 +10,8 @@ from summarize import (
     clean_abstract_text,
     summarize_with_claude,
     save_summary_as_pdf,
+    build_vancouver_citations,
+    client,
 )
 
 load_dotenv()
@@ -193,6 +195,19 @@ with col2:
         options=["Any time", "Last 1 year", "Last 2 years", "Last 5 years"],
     )
 
+sort_choice = st.selectbox(
+    "🔀 Sort results by",
+    options=["Most recent", "Most relevant", "First author", "Journal"],
+)
+
+sort_map = {
+    "Most recent": "date",
+    "Most relevant": "relevance",
+    "First author": "author",
+    "Journal": "journal",
+}
+sort_by = sort_map[sort_choice]
+
 st.markdown("</div>", unsafe_allow_html=True)
 
 years_back_map = {
@@ -210,7 +225,8 @@ if st.button("Search and Summarize"):
     else:
         with st.spinner(f"Searching PubMed for {num_papers} papers on '{topic}'..."):
             try:
-                id_list = search_pubmed(topic, max_results=num_papers, years_back=years_back)
+                id_list = search_pubmed(topic, max_results=num_papers, years_back=years_back, sort_by=sort_by)
+                
             except Exception as e:
                 st.error(f"Could not reach PubMed: {e}")
                 st.stop()
@@ -260,6 +276,11 @@ if st.button("Search and Summarize"):
         for pid in id_list:
             st.markdown(f"- [PMID {pid}](https://pubmed.ncbi.nlm.nih.gov/{pid}/)")
 
+        st.markdown("### 📖 References (Vancouver Style)")
+        citations = build_vancouver_citations(id_list)
+        for i, citation in enumerate(citations, start=1):
+            st.markdown(f"{i}. {citation}")
+
         # --- PDF download button ---
         pdf_path = save_summary_as_pdf(topic, summary)
         with open(pdf_path, "rb") as f:
@@ -269,3 +290,21 @@ if st.button("Search and Summarize"):
                 file_name=pdf_path.split("/")[-1],
                 mime="application/pdf",
             )
+
+        # --- Follow-up question ---
+        st.markdown("### 💬 Ask a follow-up question")
+        followup = st.text_input("e.g. 'Which of these had the largest sample size?'", key=f"followup_{topic}")
+        if st.button("Ask Claude", key=f"ask_{topic}"):
+            if followup.strip():
+                with st.spinner("Thinking..."):
+                    followup_prompt = f"""Based on this earlier summary of PubMed research on "{topic}":
+
+{summary}
+
+Answer this follow-up question concisely: {followup}"""
+                    followup_response = client.messages.create(
+                        model="claude-sonnet-4-5",
+                        max_tokens=500,
+                        messages=[{"role": "user", "content": followup_prompt}]
+                    )
+                    st.markdown(followup_response.content[0].text)
