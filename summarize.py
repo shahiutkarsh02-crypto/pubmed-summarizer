@@ -17,8 +17,12 @@ client = anthropic.Anthropic()  # it automatically reads ANTHROPIC_API_KEY
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 
 
-def search_pubmed(topic, max_results=5):
-    """Ask PubMed for the IDs of the most recent papers on 'topic'."""
+def search_pubmed(topic, max_results=5, years_back=None):
+    """
+    Ask PubMed for the IDs of the most recent papers on 'topic'.
+    If years_back is given (e.g. 2), only papers published in the
+    last N years are included.
+    """
     search_url = BASE_URL + "esearch.fcgi"
     params = {
         "db": "pubmed",
@@ -27,6 +31,15 @@ def search_pubmed(topic, max_results=5):
         "sort": "date",
         "retmode": "json"
     }
+
+    if years_back:
+        import datetime
+        end_date = datetime.date.today()
+        start_date = end_date.replace(year=end_date.year - years_back)
+        params["datetype"] = "pdat"  # filter by publication date
+        params["mindate"] = start_date.strftime("%Y/%m/%d")
+        params["maxdate"] = end_date.strftime("%Y/%m/%d")
+
     response = requests.get(search_url, params=params)
     data = response.json()
     return data["esearchresult"]["idlist"]
