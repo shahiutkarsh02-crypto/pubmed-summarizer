@@ -148,6 +148,19 @@ if not st.session_state.authenticated:
             st.error("Incorrect password.")
     st.stop()   
 
+# --- Session search history ---
+if "search_history" not in st.session_state:
+    st.session_state.search_history = []
+
+with st.sidebar:
+    st.markdown("### 🕘 Search History")
+    if not st.session_state.search_history:
+        st.caption("Your past searches this session will appear here.")
+    else:
+        for i, entry in enumerate(reversed(st.session_state.search_history)):
+            with st.expander(f"{entry['topic']} ({entry['num_papers']} papers)"):
+                st.markdown(entry['summary'])
+
 st.markdown("""
 <div style="text-align:center; padding: 2rem 0 1rem 0;">
     <h1 style="font-size:2.8rem; margin-bottom:0.2rem;
@@ -222,6 +235,13 @@ if st.button("Search and Summarize"):
 
         st.markdown("### Summary")
         st.markdown(summary)
+
+        # Save this search into session history
+        st.session_state.search_history.append({
+            "topic": topic,
+            "num_papers": num_papers,
+            "summary": summary,
+        })
 
         st.markdown("### 🔗 View Original Papers on PubMed")
         for pid in id_list:
