@@ -37,7 +37,7 @@ def search_pubmed(topic, max_results=5, years_back=None, sort_by="date"):
         import datetime
         end_date = datetime.date.today()
         start_date = end_date.replace(year=end_date.year - years_back)
-        params["datetype"] = "pdat"  # filter by publication date
+        params["datetype"] = "pdat"
         params["mindate"] = start_date.strftime("%Y/%m/%d")
         params["maxdate"] = end_date.strftime("%Y/%m/%d")
 
@@ -58,11 +58,11 @@ def fetch_details(id_list):
     response = requests.get(fetch_url, params=params)
     return response.text
 
+
 def build_vancouver_citations(id_list):
     """
     Fetches basic citation info (authors, title, journal, year) for
-    each paper and formats them as Vancouver-style references —
-    the citation style most commonly used in medical/pharmacy writing.
+    each paper and formats them as Vancouver-style references.
     """
     fetch_url = BASE_URL + "esummary.fcgi"
     params = {
@@ -93,6 +93,62 @@ def build_vancouver_citations(id_list):
             citations.append(f"[Citation unavailable for PMID {pid}]")
 
     return citations
+
+
+def build_paper_badges(id_list):
+    """
+    Fetches publication metadata (journal, year, publication type) for
+    each paper to build small trust/credibility badges.
+    """
+    fetch_url = BASE_URL + "esummary.fcgi"
+    params = {
+        "db": "pubmed",
+        "id": ",".join(id_list),
+        "retmode": "json"
+    }
+    response = requests.get(fetch_url, params=params)
+    data = response.json()
+
+    badges = []
+    preprint_servers = ["biorxiv", "medrxiv", "preprints.org", "ssrn"]
+
+    for pid in id_list:
+        try:
+            item = data["result"][pid]
+            journal = item.get("source", "Unknown journal")
+            pub_date = item.get("pubdate", "")
+            year = pub_date.split(" ")[0] if pub_date else "Unknown year"
+            pub_types = item.get("pubtype", [])
+
+            evidence_type = "Journal Article"
+            priority = ["Randomized Controlled Trial", "Meta-Analysis",
+                        "Systematic Review", "Review", "Case Reports",
+                        "Clinical Trial", "Observational Study"]
+            for p in priority:
+                if p in pub_types:
+                    evidence_type = p
+                    break
+
+            is_preprint = any(server in journal.lower() for server in preprint_servers)
+
+            badges.append({
+                "pmid": pid,
+                "journal": journal,
+                "year": year,
+                "evidence_type": evidence_type,
+                "peer_reviewed": not is_preprint,
+            })
+        except KeyError:
+            badges.append({
+                "pmid": pid,
+                "journal": "Unknown",
+                "year": "Unknown",
+                "evidence_type": "Unknown",
+                "peer_reviewed": True,
+            })
+
+    return badges
+
 
 def clean_abstract_text(raw_text):
     """
@@ -173,8 +229,6 @@ Here are the raw abstracts:
 def save_summary(topic, summary):
     """
     Saves the summary to a text file inside a folder called 'summaries'.
-    The filename includes the topic and today's date/time so old
-    searches don't get overwritten.
     """
     import datetime
 
@@ -292,6 +346,8 @@ def main():
         print("=" * 80)
 
         save_summary(topic, summary)
+        pdf_file = save_summary_as_pdf(topic, summary)
+        print(f"PDF also saved to: {pdf_file}")
 
     except KeyboardInterrupt:
         print("\n\nCancelled. Goodbye!")

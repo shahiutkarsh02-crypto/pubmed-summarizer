@@ -2,6 +2,7 @@
 # Streamlit web version of the PubMed + Claude summarizer.
 
 import os
+import json
 import streamlit as st
 from dotenv import load_dotenv
 from summarize import (
@@ -11,13 +12,14 @@ from summarize import (
     summarize_with_claude,
     save_summary_as_pdf,
     build_vancouver_citations,
+    build_paper_badges,
     client,
 )
 
 load_dotenv()
 APP_PASSWORD = os.getenv("APP_PASSWORD")
 
-st.set_page_config(page_title="PubMed AI Summarizer", page_icon="🔬")
+st.set_page_config(page_title="Unipharma | PubMed AI Summarizer", page_icon="🔬")
 
 # --- Custom dark theme styling ---
 st.markdown("""
@@ -148,7 +150,7 @@ if not st.session_state.authenticated:
             st.rerun()
         else:
             st.error("Incorrect password.")
-    st.stop()   
+    st.stop()
 
 # --- Session search history ---
 if "search_history" not in st.session_state:
@@ -165,15 +167,20 @@ with st.sidebar:
 
 st.markdown("""
 <div style="text-align:center; padding: 2rem 0 1rem 0;">
-    <h1 style="font-size:2.8rem; margin-bottom:0.2rem;
+    <p style="color:#a78bfa; font-size:0.95rem; letter-spacing:0.25em;
+              text-transform:uppercase; margin-bottom:0.5rem; font-weight:800;">
+        ⚡ UNIPHARMA
+    </p>
+    <h1 style="font-size:2.6rem; margin-bottom:0.6rem;
                background: linear-gradient(135deg, #6366f1, #a855f7, #10b981);
                -webkit-background-clip: text;
                -webkit-text-fill-color: transparent;
                background-clip: text;">
         🔬 PubMed AI Summarizer
     </h1>
-    <p style="color:#9999a8; font-size:1.05rem; max-width:520px; margin:0 auto;">
-        Turn recent PubMed research into clear, structured, pharmacy-ready summaries — in seconds.
+    <p style="color:#9999a8; font-size:1.05rem; max-width:480px; margin:0 auto;
+              line-height:1.6;">
+        Turning the latest PubMed research into clear,<br>evidence-ready insights for pharmacy professionals.
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -226,7 +233,7 @@ if st.button("Search and Summarize"):
         with st.spinner(f"Searching PubMed for {num_papers} papers on '{topic}'..."):
             try:
                 id_list = search_pubmed(topic, max_results=num_papers, years_back=years_back, sort_by=sort_by)
-                
+
             except Exception as e:
                 st.error(f"Could not reach PubMed: {e}")
                 st.stop()
@@ -253,7 +260,6 @@ if st.button("Search and Summarize"):
         st.markdown(summary)
 
         # --- Copy to clipboard button ---
-        import json
         summary_js_safe = json.dumps(summary)
         st.markdown(f"""
         <button onclick="navigator.clipboard.writeText({summary_js_safe})"
@@ -272,10 +278,22 @@ if st.button("Search and Summarize"):
             "summary": summary,
         })
 
+        st.markdown("### 🏷️ Evidence Overview")
+        badges = build_paper_badges(id_list)
+        for b in badges:
+            peer_badge = "✅ Peer-Reviewed" if b["peer_reviewed"] else "⚠️ Preprint"
+            st.markdown(
+                f"""<div style="display:inline-block; background:#1a1a24; border:1px solid #2a2a38;
+                border-radius:20px; padding:0.4rem 1rem; margin:0.2rem 0.3rem 0.2rem 0;
+                font-size:0.85rem;">
+                <b>{b['evidence_type']}</b> · {b['journal']} · {b['year']} · {peer_badge}
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
         st.markdown("### 🔗 View Original Papers on PubMed")
         for pid in id_list:
             st.markdown(f"- [PMID {pid}](https://pubmed.ncbi.nlm.nih.gov/{pid}/)")
-
         st.markdown("### 📖 References (Vancouver Style)")
         citations = build_vancouver_citations(id_list)
         for i, citation in enumerate(citations, start=1):
