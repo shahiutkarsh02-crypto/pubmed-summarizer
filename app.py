@@ -236,6 +236,19 @@ if st.button("Search and Summarize"):
         st.markdown("### Summary")
         st.markdown(summary)
 
+        # --- Copy to clipboard button ---
+        import json
+        summary_js_safe = json.dumps(summary)
+        st.markdown(f"""
+        <button onclick="navigator.clipboard.writeText({summary_js_safe})"
+                style="background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                       color: white; border: none; border-radius: 8px;
+                       padding: 0.5rem 1.2rem; font-weight: 600; cursor: pointer;
+                       margin-bottom: 1rem;">
+            📋 Copy Summary
+        </button>
+        """, unsafe_allow_html=True)
+
         # Save this search into session history
         st.session_state.search_history.append({
             "topic": topic,
