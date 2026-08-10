@@ -13,9 +13,19 @@ from summarize import (
     save_summary_as_pdf,
     build_vancouver_citations,
     build_paper_badges,
+    get_paper_titles,
     client,
 )
-from db import init_db, create_user, verify_user, save_search, get_user_history
+from db import (
+    init_db,
+    create_user,
+    verify_user,
+    save_search,
+    get_user_history,
+    save_paper,
+    unsave_paper,
+    get_saved_papers,
+)
 
 init_db()
 load_dotenv()
@@ -141,6 +151,26 @@ st.markdown("""
         66% { transform: translate(-20px, 25px) scale(0.92); }
     }
 
+    .glow-card {
+        transition: all 0.25s ease;
+        cursor: default;
+    }
+    .glow-card:hover {
+        transform: translateY(-3px);
+        border-color: #6366f1 !important;
+        box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
+    }
+
+    .scroll-reveal {
+        opacity: 0;
+        transform: translateY(20px);
+        transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .scroll-reveal.revealed {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
     .gradient-text {
         background: linear-gradient(90deg, #6366f1, #a855f7, #10b981, #6366f1);
         background-size: 300% auto;
@@ -164,6 +194,24 @@ st.markdown("""
 <div class="orb orb1"></div>
 <div class="orb orb2"></div>
 <div class="orb orb3"></div>
+
+<script>
+function setupScrollReveal() {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('revealed');
+            }
+        });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.scroll-reveal:not(.revealed)').forEach(el => {
+        observer.observe(el);
+    });
+}
+setupScrollReveal();
+setInterval(setupScrollReveal, 1000);
+</script>
 """, unsafe_allow_html=True)
 
 # --- Real login / signup ---
@@ -190,14 +238,15 @@ if st.session_state.user_id is None:
         login_username = st.text_input("Username", key="login_username")
         login_password = st.text_input("Password", type="password", key="login_password")
         if st.button("Log In"):
-            user_id = verify_user(login_username, login_password)
+            user_id, error_msg = verify_user(login_username, login_password)
             if user_id:
                 st.session_state.user_id = user_id
                 st.session_state.username = login_username
                 st.rerun()
+            elif error_msg:
+                st.error(error_msg)
             else:
                 st.error("Incorrect username or password.")
-
     with tab2:
         signup_username = st.text_input("Choose a username", key="signup_username")
         signup_email = st.text_input("Email", key="signup_email")
@@ -205,8 +254,8 @@ if st.session_state.user_id is None:
         if st.button("Sign Up"):
             if not signup_username.strip() or not signup_email.strip() or not signup_password.strip():
                 st.warning("Please fill in all fields.")
-            elif len(signup_password) < 6:
-                st.warning("Password should be at least 6 characters.")
+            elif len(signup_password) < 8:
+                st.warning("Password should be at least 8 characters.")
             else:
                 success, error_msg = create_user(signup_username, signup_email, signup_password)
                 if success:
@@ -238,6 +287,41 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# --- Animated stats bar ---
+stats_history_count = len(get_user_history(st.session_state.user_id))
+stats_saved_count = len(get_saved_papers(st.session_state.user_id))
+
+st.markdown(f"""
+<div style="display:flex; justify-content:center; gap:3rem; padding:1.2rem 0 0.5rem 0;">
+    <div style="text-align:center;">
+        <div class="count-up gradient-text" data-target="{stats_history_count}" style="font-size:2rem; font-weight:800;">0</div>
+        <div style="color:#9999a8; font-size:0.85rem; letter-spacing:0.05em; text-transform:uppercase;">Searches Run</div>
+    </div>
+    <div style="text-align:center;">
+        <div class="count-up gradient-text" data-target="{stats_saved_count}" style="font-size:2rem; font-weight:800;">0</div>
+        <div style="color:#9999a8; font-size:0.85rem; letter-spacing:0.05em; text-transform:uppercase;">Papers Saved</div>
+    </div>
+</div>
+
+<script>
+document.querySelectorAll('.count-up').forEach(function(el) {{
+    const target = parseInt(el.getAttribute('data-target'), 10);
+    let current = 0;
+    const steps = 40;
+    const increment = target / steps || 1;
+    const interval = setInterval(function() {{
+        current += increment;
+        if (current >= target) {{
+            el.textContent = target;
+            clearInterval(interval);
+        }} else {{
+            el.textContent = Math.floor(current);
+        }}
+    }}, 25);
+}});
+</script>
+""", unsafe_allow_html=True)
+
 # --- Sidebar: search history ---
 with st.sidebar:
     st.markdown(f"### 👤 {st.session_state.username}")
@@ -251,6 +335,19 @@ with st.sidebar:
             with st.expander(f"{topic_h} ({num_papers_h} papers)"):
                 st.caption(created_at_h)
                 st.markdown(summary_h)
+
+    st.markdown("### 🔖 Saved Papers")
+    saved = get_saved_papers(st.session_state.user_id)
+    if not saved:
+        st.caption("Papers you save will appear here.")
+    else:
+        for pmid, title, journal, year, saved_at in saved:
+            with st.expander(title[:60] + ("..." if len(title) > 60 else "")):
+                st.caption(f"{journal} · {year}")
+                st.markdown(f"[View on PubMed](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
+                if st.button("Remove", key=f"unsave_{pmid}"):
+                    unsave_paper(st.session_state.user_id, pmid)
+                    st.rerun()
 
     st.markdown("---")
     if st.button("Log Out"):
@@ -358,12 +455,14 @@ if st.button("Search and Summarize"):
         # Save this search into the user's permanent history
         save_search(st.session_state.user_id, topic, num_papers, summary)
 
+        st.markdown('<div class="scroll-reveal">', unsafe_allow_html=True)
+
         st.markdown("### 🏷️ Evidence Overview")
         badges = build_paper_badges(id_list)
         for b in badges:
             peer_badge = "✅ Peer-Reviewed" if b["peer_reviewed"] else "⚠️ Preprint"
             st.markdown(
-                f"""<div style="display:inline-block; background:#24242e; border:1px solid #34343f;
+                f"""<div class="glow-card" style="display:inline-block; background:#24242e; border:1px solid #34343f;
                 border-radius:20px; padding:0.4rem 1rem; margin:0.2rem 0.3rem 0.2rem 0;
                 font-size:0.85rem;">
                 <b>{b['evidence_type']}</b> · {b['journal']} · {b['year']} · {peer_badge}
@@ -372,13 +471,26 @@ if st.button("Search and Summarize"):
             )
 
         st.markdown("### 🔗 View Original Papers on PubMed")
+        titles = get_paper_titles(id_list)
+        badges_lookup = {b["pmid"]: b for b in badges}
         for pid in id_list:
-            st.markdown(f"- [PMID {pid}](https://pubmed.ncbi.nlm.nih.gov/{pid}/)")
+            paper_title = titles.get(pid, "Untitled")
+            journal = badges_lookup.get(pid, {}).get("journal", "")
+            year = badges_lookup.get(pid, {}).get("year", "")
+            col_a, col_b = st.columns([5, 1])
+            with col_a:
+                st.markdown(f"- [{paper_title}](https://pubmed.ncbi.nlm.nih.gov/{pid}/) — PMID {pid}")
+            with col_b:
+                if st.button("🔖 Save", key=f"save_{pid}"):
+                    save_paper(st.session_state.user_id, pid, paper_title, journal, year)
+                    st.success("Saved!")
 
         st.markdown("### 📖 References (Vancouver Style)")
         citations = build_vancouver_citations(id_list)
         for i, citation in enumerate(citations, start=1):
             st.markdown(f"{i}. {citation}")
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
         # --- PDF download button ---
         pdf_path = save_summary_as_pdf(topic, summary)

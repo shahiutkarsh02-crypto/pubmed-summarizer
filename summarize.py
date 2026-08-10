@@ -57,6 +57,24 @@ def fetch_details(id_list):
     }
     response = requests.get(fetch_url, params=params)
     return response.text
+def get_paper_titles(id_list):
+    """Fetches just the titles for a list of PubMed IDs, as a {pmid: title} dict."""
+    fetch_url = BASE_URL + "esummary.fcgi"
+    params = {
+        "db": "pubmed",
+        "id": ",".join(id_list),
+        "retmode": "json"
+    }
+    response = requests.get(fetch_url, params=params)
+    data = response.json()
+
+    titles = {}
+    for pid in id_list:
+        try:
+            titles[pid] = data["result"][pid].get("title", "Untitled")
+        except KeyError:
+            titles[pid] = "Untitled"
+    return titles
 
 
 def build_paper_badges(id_list):

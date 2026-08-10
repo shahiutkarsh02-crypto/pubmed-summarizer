@@ -4,8 +4,12 @@
 
 import sqlite3
 import bcrypt
+import datetime
 
 DB_PATH = "users.db"
+
+LOCK_THRESHOLD = 5     # failed attempts before locking
+LOCK_MINUTES = 10      # how long the lock lasts
 
 
 def get_connection():
@@ -40,6 +44,30 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS saved_papers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            pmid TEXT NOT NULL,
+            title TEXT,
+            journal TEXT,
+            year TEXT,
+            saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            UNIQUE(user_id, pmid)
+        )
+    """)
+
+    # Add security columns if this is an older users.db that doesn't have them yet
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -68,22 +96,55 @@ def create_user(username, email, password):
 
 def verify_user(username, password):
     """
-    Checks a login attempt. Returns the user's id if correct,
-    or None if the username doesn't exist or the password is wrong.
+    Checks a login attempt. Returns (user_id, error_message).
+    - On success: (user_id, None)
+    - On wrong username/password: (None, None) — caller shows a generic message
+    - On lockout: (None, "Too many failed attempts. Try again in N minute(s).")
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (username,))
+    cursor.execute(
+        "SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE username = ?",
+        (username,),
+    )
     row = cursor.fetchone()
-    conn.close()
 
     if row is None:
-        return None
+        conn.close()
+        return None, None
 
-    user_id, stored_hash = row
+    user_id, stored_hash, failed_attempts, locked_until = row
+
+    if locked_until:
+        locked_until_dt = datetime.datetime.fromisoformat(locked_until)
+        if datetime.datetime.now() < locked_until_dt:
+            minutes_left = int((locked_until_dt - datetime.datetime.now()).total_seconds() / 60) + 1
+            conn.close()
+            return None, f"Too many failed attempts. Try again in {minutes_left} minute(s)."
+
     if bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
-        return user_id
-    return None
+        cursor.execute(
+            "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?", (user_id,)
+        )
+        conn.commit()
+        conn.close()
+        return user_id, None
+
+    # Wrong password — count the failure
+    failed_attempts += 1
+    locked_until_value = None
+    if failed_attempts >= LOCK_THRESHOLD:
+        locked_until_value = (
+            datetime.datetime.now() + datetime.timedelta(minutes=LOCK_MINUTES)
+        ).isoformat()
+
+    cursor.execute(
+        "UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?",
+        (failed_attempts, locked_until_value, user_id),
+    )
+    conn.commit()
+    conn.close()
+    return None, None
 
 
 def save_search(user_id, topic, num_papers, summary):
@@ -106,6 +167,47 @@ def get_user_history(user_id, limit=20):
         "SELECT topic, num_papers, summary, created_at FROM search_history "
         "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
         (user_id, limit),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def save_paper(user_id, pmid, title, journal, year):
+    """Bookmarks a paper for this user. Does nothing if already saved."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO saved_papers (user_id, pmid, title, journal, year) VALUES (?, ?, ?, ?, ?)",
+            (user_id, pmid, title, journal, year),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass  # already saved, ignore
+    finally:
+        conn.close()
+
+
+def unsave_paper(user_id, pmid):
+    """Removes a bookmark."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM saved_papers WHERE user_id = ? AND pmid = ?", (user_id, pmid)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_saved_papers(user_id):
+    """Fetches all of this user's bookmarked papers, newest first."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT pmid, title, journal, year, saved_at FROM saved_papers "
+        "WHERE user_id = ? ORDER BY saved_at DESC",
+        (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
