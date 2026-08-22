@@ -1,5 +1,7 @@
 # app.py
-# Streamlit web version of the PubMed + Claude summarizer.
+# Streamlit web version of the PubMed + AI summarizer.
+# Supports two summarization engines: free NVIDIA Nemotron 3 Ultra,
+# or paid Claude.
 
 import os
 import json
@@ -10,11 +12,13 @@ from summarize import (
     fetch_details,
     clean_abstract_text,
     summarize_with_claude,
+    summarize_with_nemotron,
     save_summary_as_pdf,
     build_vancouver_citations,
     build_paper_badges,
     get_paper_titles,
     client,
+    nvidia_client,
 )
 from db import (
     init_db,
@@ -32,186 +36,283 @@ load_dotenv()
 
 st.set_page_config(page_title="Unipharma | PubMed AI Summarizer", page_icon="🔬")
 
-# --- Custom theme styling ---
+# --- Custom theme styling: "Clinic Light" design system ---
 st.markdown("""
 <style>
-    * {
-        cursor: default;
-    }
-    button, a, .stButton button, .stDownloadButton button, [role="button"] {
-        cursor: pointer !important;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Karla:wght@400;500;600;700&display=swap');
 
-    .stApp {
-        background: linear-gradient(180deg, #17171d 0%, #202028 50%, #17171d 100%);
-        color: #e8e8ec;
-    }
-
-    h1, h2, h3 {
-        color: #f5f5f7;
-        font-weight: 600;
-    }
-
-    .stTextInput input, .stTextInput > div > div {
-        background-color: #24242e !important;
-        color: #e8e8ec !important;
-        border: 1px solid #34343f !important;
-        border-radius: 8px !important;
-        transition: all 0.3s ease;
-    }
-    .stTextInput input:focus {
-        border: 1px solid #6366f1 !important;
-        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
-    }
-
-    .stButton button {
-        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.6rem 1.5rem;
-        font-weight: 600;
-        transition: all 0.15s ease;
-        box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
-    }
-    .stButton button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
-    }
-    .stButton button:active {
-        transform: translateY(1px) scale(0.97);
-        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-    }
-
-    .stDownloadButton button {
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.15s ease;
-    }
-    .stDownloadButton button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
-    }
-    .stDownloadButton button:active {
-        transform: translateY(1px) scale(0.97);
-    }
-
-    [data-testid="stMarkdownContainer"] {
-        animation: fadeIn 0.6s ease-in;
-    }
-
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(8px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    .stAlert {
-        border-radius: 8px !important;
-        animation: fadeIn 0.4s ease-in;
-    }
-
-    div[data-baseweb="slider"] {
-        padding-top: 10px;
-    }
-
-    .orb {
-        position: fixed;
-        border-radius: 50%;
-        filter: blur(60px);
-        opacity: 0.3;
-        z-index: 0;
-        pointer-events: none;
-        animation: float 14s ease-in-out infinite;
-    }
-    .orb1 {
-        width: 350px; height: 350px;
-        background: radial-gradient(circle, #6366f1, transparent 70%);
-        top: -100px; left: -80px;
-        animation-delay: 0s;
-    }
-    .orb2 {
-        width: 280px; height: 280px;
-        background: radial-gradient(circle, #a855f7, transparent 70%);
-        bottom: -60px; right: -60px;
-        animation-delay: 3s;
-    }
-    .orb3 {
-        width: 220px; height: 220px;
-        background: radial-gradient(circle, #10b981, transparent 70%);
-        top: 40%; right: 10%;
-        animation-delay: 6s;
-    }
-
-    @keyframes float {
-        0%, 100% { transform: translate(0, 0) scale(1); }
-        33% { transform: translate(25px, -35px) scale(1.1); }
-        66% { transform: translate(-20px, 25px) scale(0.92); }
-    }
-
-    .glow-card {
-        transition: all 0.25s ease;
-        cursor: default;
-    }
-    .glow-card:hover {
-        transform: translateY(-3px);
-        border-color: #6366f1 !important;
-        box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
-    }
-
-    .scroll-reveal {
-        opacity: 0;
-        transform: translateY(20px);
-        transition: opacity 0.6s ease, transform 0.6s ease;
-    }
-    .scroll-reveal.revealed {
-        opacity: 1;
-        transform: translateY(0);
-    }
-
-    .gradient-text {
-        background: linear-gradient(90deg, #6366f1, #a855f7, #10b981, #6366f1);
-        background-size: 300% auto;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        animation: shimmer 6s linear infinite;
-    }
-
-    @keyframes shimmer {
-        0% { background-position: 0% center; }
-        100% { background-position: 300% center; }
-    }
-
-    .block-container {
-        position: relative;
-        z-index: 1;
-    }
-</style>
-
-<div class="orb orb1"></div>
-<div class="orb orb2"></div>
-<div class="orb orb3"></div>
-
-<script>
-function setupScrollReveal() {
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.classList.add('revealed');
-            }
-        });
-    }, { threshold: 0.1 });
-
-    document.querySelectorAll('.scroll-reveal:not(.revealed)').forEach(el => {
-        observer.observe(el);
-    });
+:root {
+  --bg:        #F6F7F4;
+  --card:      #FFFFFF;
+  --border:    #E2E6DE;
+  --ink:       #14262B;
+  --muted:     #5F6F72;
+  --primary:   #0E5A5E;
+  --primary-d: #0A4448;
+  --sage:      #C7D8C6;
+  --sage-soft: #EDF2EC;
+  --radius:    14px;
+  --pill:      999px;
+  --shadow-sm: 0 1px 2px rgba(20,38,43,.04), 0 2px 8px rgba(20,38,43,.05);
+  --shadow-md: 0 2px 4px rgba(20,38,43,.05), 0 10px 24px -8px rgba(20,38,43,.12);
+  --shadow-lift: 0 6px 18px -6px rgba(14,90,94,.38);
 }
-setupScrollReveal();
-setInterval(setupScrollReveal, 1000);
-</script>
+
+.stApp {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Karla', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+.stApp .block-container { padding-top: 2.75rem; max-width: 1080px; }
+
+.stApp h1, .stApp h2, .stApp h3, .stApp h4,
+.stApp [data-testid="stMarkdownContainer"] h1,
+.stApp [data-testid="stMarkdownContainer"] h2,
+.stApp [data-testid="stMarkdownContainer"] h3 {
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1.18;
+  text-wrap: balance;
+}
+.stApp h1 { font-size: clamp(2rem, 4.4vw, 3.15rem); }
+.stApp h2 { font-size: clamp(1.5rem, 2.6vw, 2rem); margin-top: .25rem; }
+.stApp h3 { font-size: 1.2rem; }
+.stApp p, .stApp li, .stApp label { color: var(--ink); }
+.stApp a { color: var(--primary); text-underline-offset: 3px; }
+.stApp hr { border-color: var(--border); }
+
+.hero {
+  padding: 2.5rem 0 2rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2.25rem;
+  text-align: center;
+}
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  background: var(--sage-soft);
+  border: 1px solid var(--sage);
+  color: var(--primary-d);
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: .69rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  padding: .38rem .85rem;
+  border-radius: var(--pill);
+  margin-bottom: 1.1rem;
+}
+.badge-pill::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.hero-title { margin: 0 0 .75rem; }
+.hero-sub {
+  font-size: 1.09rem;
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 auto;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"] {
+  background: var(--card);
+  border-radius: var(--radius);
+}
+[data-testid="stVerticalBlockBorderWrapper"][style*="border"],
+div[data-testid="stVerticalBlockBorderWrapper"] > div[style*="border"] {
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-sm);
+}
+.stApp [data-testid="stExpander"] details,
+.stApp [data-testid="stForm"] {
+  background: var(--card);
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.stApp [data-testid="stExpander"] summary { font-weight: 600; color: var(--ink); }
+
+.stButton button,
+.stFormSubmitButton button,
+.stDownloadButton button,
+.stLinkButton a {
+  font-family: 'Instrument Sans', sans-serif !important;
+  font-weight: 600 !important;
+  font-size: .94rem !important;
+  border-radius: var(--pill) !important;
+  padding: .58rem 1.5rem !important;
+  border: 1px solid var(--primary) !important;
+  background: var(--primary) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 1px 2px rgba(20,38,43,.08);
+  transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.stButton button:hover,
+.stFormSubmitButton button:hover,
+.stDownloadButton button:hover,
+.stLinkButton a:hover {
+  background: var(--primary-d) !important;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
+}
+.stButton button:active,
+.stFormSubmitButton button:active { transform: translateY(0); }
+.stButton button:focus-visible,
+.stTextInput input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.stTextInput input,
+.stNumberInput input,
+.stDateInput input,
+.stTextArea textarea,
+div[data-baseweb="select"] > div {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  color: var(--ink) !important;
+  font-family: 'Karla', sans-serif !important;
+  font-size: .95rem !important;
+  box-shadow: none !important;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stTextArea textarea:focus,
+div[data-baseweb="select"] > div:focus-within {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px rgba(14,90,94,.12) !important;
+}
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder { color: #9AA7A9 !important; }
+
+.stApp label,
+.stApp [data-testid="stWidgetLabel"] p {
+  font-family: 'Instrument Sans', sans-serif !important;
+  font-size: .82rem !important;
+  font-weight: 500 !important;
+  color: var(--muted) !important;
+  letter-spacing: .01em;
+}
+
+div[data-baseweb="radio"] label,
+div[data-baseweb="checkbox"] label {
+  font-family: 'Karla', sans-serif !important;
+  font-size: .95rem !important;
+  color: var(--ink) !important;
+  padding: .18rem 0;
+  cursor: pointer;
+}
+div[data-baseweb="radio"] label:hover { color: var(--primary) !important; }
+.stSlider [data-baseweb="slider"] [role="slider"] { border-color: var(--primary) !important; }
+
+.stTabs [data-baseweb="tab-list"] { gap: .25rem; border-bottom: 1px solid var(--border); }
+.stTabs [data-baseweb="tab"] {
+  font-family: 'Instrument Sans', sans-serif;
+  font-weight: 500;
+  color: var(--muted);
+  border-radius: 8px 8px 0 0;
+}
+.stTabs [aria-selected="true"] { color: var(--primary) !important; }
+.stTabs [data-baseweb="tab-highlight"] { background: var(--primary) !important; }
+
+.step-label {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: .69rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .13em;
+  color: var(--primary);
+  margin: .4rem 0 .6rem 0;
+}
+.step-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1.4rem 0 1rem 0;
+}
+
+.chip-row { display: flex; flex-wrap: wrap; gap: .45rem; margin: .6rem 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: var(--sage-soft);
+  border: 1px solid var(--sage);
+  color: var(--primary-d);
+  font-family: 'Karla', sans-serif;
+  font-size: .78rem; font-weight: 600;
+  padding: .3rem .75rem;
+  border-radius: var(--pill);
+  white-space: nowrap;
+}
+.chip--neutral { background: #F1F3EF; border-color: var(--border); color: var(--muted); }
+
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  margin: 1.75rem 0;
+}
+.stat {
+  flex: 1 1 160px;
+  padding: 1.35rem 1.4rem;
+  border-right: 1px solid var(--border);
+  text-align: center;
+}
+.stat:last-child { border-right: 0; }
+.stat-value {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 1.95rem; font-weight: 600;
+  letter-spacing: -.025em;
+  color: var(--primary);
+  line-height: 1.05;
+}
+.stat-label {
+  font-size: .72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .12em;
+  color: var(--muted);
+  margin-top: .4rem;
+}
+
+.top-nav {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.7rem 1.2rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  margin-bottom: 1.8rem;
+  box-shadow: var(--shadow-sm);
+}
+.top-nav .brand {
+  font-family: 'Instrument Sans', sans-serif;
+  font-weight: 700; letter-spacing: 0.12em; color: var(--ink); font-size: 0.85rem;
+}
+.top-nav .user-pill {
+  background: var(--primary); color: #fff;
+  padding: 0.4rem 1rem; border-radius: var(--pill);
+  font-size: 0.85rem; font-weight: 600;
+}
+
+.stApp [data-testid="stAlert"] {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.stApp [data-testid="stSidebar"] {
+  background: #FFFFFF;
+  border-right: 1px solid var(--border);
+}
+</style>
 """, unsafe_allow_html=True)
 
 # --- Real login / signup ---
@@ -221,14 +322,10 @@ if "user_id" not in st.session_state:
 
 if st.session_state.user_id is None:
     st.markdown("""
-    <div style="text-align:center; padding: 2rem 0 1rem 0;">
-        <p style="color:#a78bfa; font-size:0.95rem; letter-spacing:0.25em;
-                  text-transform:uppercase; margin-bottom:0.5rem; font-weight:800;">
-            ⚡ UNIPHARMA
-        </p>
-        <h1 class="gradient-text" style="font-size:2.4rem;">
-            🔬 PubMed AI Summarizer
-        </h1>
+    <div class="hero">
+        <span class="badge-pill">⚡ Unipharma</span>
+        <h1 class="hero-title">🔬 PubMed AI Summarizer</h1>
+        <p class="hero-sub">Evidence-ready research summaries for pharmacy professionals — powered by free and premium AI.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -267,59 +364,33 @@ if st.session_state.user_id is None:
 
 # --- Top navigation bar ---
 st.markdown(f"""
-<div style="display:flex; justify-content:space-between; align-items:center;
-            padding:0.7rem 1.2rem; background:#1c1c24;
-            border-radius:999px; margin-bottom:1.8rem;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.3);">
+<div class="top-nav">
     <div style="display:flex; align-items:center; gap:0.6rem;">
         <span style="font-size:1.2rem;">⚡</span>
-        <span style="font-weight:800; letter-spacing:0.12em; color:#f5f5f7; font-size:0.85rem;">
-            UNIPHARMA
-        </span>
+        <span class="brand">UNIPHARMA</span>
     </div>
     <div style="display:flex; align-items:center; gap:0.8rem;">
-        <span style="color:#6b6b78; font-size:0.85rem;">PubMed AI Summarizer</span>
-        <div style="background:linear-gradient(135deg, #6366f1, #8b5cf6); color:white;
-                    padding:0.4rem 1rem; border-radius:999px; font-size:0.85rem; font-weight:600;">
-            👤 {st.session_state.username}
-        </div>
+        <span style="color:var(--muted); font-size:0.85rem;">PubMed AI Summarizer</span>
+        <div class="user-pill">👤 {st.session_state.username}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- Animated stats bar ---
+# --- Stats bar ---
 stats_history_count = len(get_user_history(st.session_state.user_id))
 stats_saved_count = len(get_saved_papers(st.session_state.user_id))
 
 st.markdown(f"""
-<div style="display:flex; justify-content:center; gap:3rem; padding:1.2rem 0 0.5rem 0;">
-    <div style="text-align:center;">
-        <div class="count-up gradient-text" data-target="{stats_history_count}" style="font-size:2rem; font-weight:800;">0</div>
-        <div style="color:#9999a8; font-size:0.85rem; letter-spacing:0.05em; text-transform:uppercase;">Searches Run</div>
+<div class="stat-row">
+    <div class="stat">
+        <div class="stat-value">{stats_history_count}</div>
+        <div class="stat-label">Searches Run</div>
     </div>
-    <div style="text-align:center;">
-        <div class="count-up gradient-text" data-target="{stats_saved_count}" style="font-size:2rem; font-weight:800;">0</div>
-        <div style="color:#9999a8; font-size:0.85rem; letter-spacing:0.05em; text-transform:uppercase;">Papers Saved</div>
+    <div class="stat">
+        <div class="stat-value">{stats_saved_count}</div>
+        <div class="stat-label">Papers Saved</div>
     </div>
 </div>
-
-<script>
-document.querySelectorAll('.count-up').forEach(function(el) {{
-    const target = parseInt(el.getAttribute('data-target'), 10);
-    let current = 0;
-    const steps = 40;
-    const increment = target / steps || 1;
-    const interval = setInterval(function() {{
-        current += increment;
-        if (current >= target) {{
-            el.textContent = target;
-            clearInterval(interval);
-        }} else {{
-            el.textContent = Math.floor(current);
-        }}
-    }}, 25);
-}});
-</script>
 """, unsafe_allow_html=True)
 
 # --- Sidebar: search history ---
@@ -356,48 +427,52 @@ with st.sidebar:
         st.rerun()
 
 st.markdown("""
-<div style="text-align:center; padding: 1rem 0 1rem 0;">
-    <h1 class="gradient-text" style="font-size:2.6rem; margin-bottom:0.6rem;">
-        🔬 PubMed AI Summarizer
-    </h1>
-    <p style="color:#9999a8; font-size:1.05rem; max-width:480px; margin:0 auto;
-              line-height:1.6;">
-        Turning the latest PubMed research into clear,<br>evidence-ready insights for pharmacy professionals.
-    </p>
+<div class="hero">
+    <span class="badge-pill">🔬 Clinical Research, Simplified</span>
+    <h1 class="hero-title">PubMed AI Summarizer</h1>
+    <p class="hero-sub">Turning the latest PubMed research into clear, evidence-ready insights for pharmacy professionals.</p>
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div style="background: rgba(36,36,46,0.6); border: 1px solid #34343f;
-            border-radius: 14px; padding: 1.5rem 1.5rem 0.5rem 1.5rem;
-            margin-bottom: 1.5rem; backdrop-filter: blur(10px);">
-""", unsafe_allow_html=True)
+with st.container(border=True):
+    st.markdown('<p class="step-label">STEP 1 · WHAT ARE YOU RESEARCHING</p>', unsafe_allow_html=True)
+    topic = st.text_input("💊 Medical topic or drug name", label_visibility="visible")
 
-topic = st.text_input("💊 Medical topic or drug name")
+    st.markdown('<div class="step-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="step-label">STEP 2 · CUSTOMIZE YOUR SEARCH</p>', unsafe_allow_html=True)
 
-col1, col2 = st.columns(2)
-with col1:
-    num_papers = st.slider("📚 How many recent papers?", min_value=1, max_value=10, value=5)
-with col2:
-    date_filter = st.selectbox(
-        "📅 Publication date range",
-        options=["Any time", "Last 1 year", "Last 2 years", "Last 5 years"],
+    col1, col2 = st.columns(2)
+    with col1:
+        num_papers = st.slider("📚 How many recent papers?", min_value=1, max_value=10, value=5)
+    with col2:
+        date_filter = st.selectbox(
+            "📅 Publication date range",
+            options=["Any time", "Last 1 year", "Last 2 years", "Last 5 years"],
+        )
+
+    sort_choice = st.selectbox(
+        "🔀 Sort results by",
+        options=["Most recent", "Most relevant", "First author", "Journal"],
     )
 
-sort_choice = st.selectbox(
-    "🔀 Sort results by",
-    options=["Most recent", "Most relevant", "First author", "Journal"],
-)
+    sort_map = {
+        "Most recent": "date",
+        "Most relevant": "relevance",
+        "First author": "author",
+        "Journal": "journal",
+    }
+    sort_by = sort_map[sort_choice]
 
-sort_map = {
-    "Most recent": "date",
-    "Most relevant": "relevance",
-    "First author": "author",
-    "Journal": "journal",
-}
-sort_by = sort_map[sort_choice]
+    st.markdown('<div class="step-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<p class="step-label">STEP 3 · CHOOSE YOUR AI</p>', unsafe_allow_html=True)
 
-st.markdown("</div>", unsafe_allow_html=True)
+    # --- Model choice: free Nemotron vs paid Claude ---
+    model_choice = st.radio(
+        "Summarize with",
+        options=["🆓 Free (Nemotron 3 Ultra)", "💎 Premium (Claude)"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
 years_back_map = {
     "Any time": None,
@@ -429,25 +504,33 @@ if st.button("Search and Summarize"):
             papers_text = fetch_details(id_list)
             papers_text = clean_abstract_text(papers_text)
 
-        with st.spinner("Asking Claude to summarize... (this takes a few seconds)"):
+        using_nemotron = model_choice.startswith("🆓")
+        model_label = "Nemotron 3 Ultra" if using_nemotron else "Claude"
+
+        with st.spinner(f"Asking {model_label} to summarize... (this takes a few seconds)"):
             try:
-                summary = summarize_with_claude(topic, papers_text, num_papers)
+                if using_nemotron:
+                    summary = summarize_with_nemotron(topic, papers_text, num_papers)
+                else:
+                    summary = summarize_with_claude(topic, papers_text, num_papers)
             except Exception as e:
-                st.error(f"Claude API error: {e}")
-                st.info("This is often a billing issue — check console.anthropic.com > Billing")
+                st.error(f"{model_label} API error: {e}")
+                if using_nemotron:
+                    st.info("Check that NVIDIA_API_KEY is set correctly in your .env file.")
+                else:
+                    st.info("This is often a billing issue — check console.anthropic.com > Billing")
                 st.stop()
 
-        st.markdown("### Summary")
+        st.markdown(f"### Summary — *{model_label}*")
         st.markdown(summary)
 
         # --- Copy to clipboard button ---
         summary_js_safe = json.dumps(summary)
         st.markdown(f"""
         <button onclick="navigator.clipboard.writeText({summary_js_safe})"
-                style="background: linear-gradient(135deg, #6366f1, #8b5cf6);
-                       color: white; border: none; border-radius: 8px;
-                       padding: 0.5rem 1.2rem; font-weight: 600; cursor: pointer;
-                       margin-bottom: 1rem;">
+                style="background: var(--primary); color: white; border: none;
+                       border-radius: 999px; padding: 0.5rem 1.2rem; font-weight: 600;
+                       cursor: pointer; margin-bottom: 1rem; font-family: 'Instrument Sans', sans-serif;">
             📋 Copy Summary
         </button>
         """, unsafe_allow_html=True)
@@ -455,20 +538,15 @@ if st.button("Search and Summarize"):
         # Save this search into the user's permanent history
         save_search(st.session_state.user_id, topic, num_papers, summary)
 
-        st.markdown('<div class="scroll-reveal">', unsafe_allow_html=True)
-
         st.markdown("### 🏷️ Evidence Overview")
         badges = build_paper_badges(id_list)
+        chip_html = '<div class="chip-row">'
         for b in badges:
             peer_badge = "✅ Peer-Reviewed" if b["peer_reviewed"] else "⚠️ Preprint"
-            st.markdown(
-                f"""<div class="glow-card" style="display:inline-block; background:#24242e; border:1px solid #34343f;
-                border-radius:20px; padding:0.4rem 1rem; margin:0.2rem 0.3rem 0.2rem 0;
-                font-size:0.85rem;">
-                <b>{b['evidence_type']}</b> · {b['journal']} · {b['year']} · {peer_badge}
-                </div>""",
-                unsafe_allow_html=True,
-            )
+            chip_class = "chip" if b["peer_reviewed"] else "chip chip--neutral"
+            chip_html += f'<span class="{chip_class}"><b>{b["evidence_type"]}</b> · {b["journal"]} · {b["year"]} · {peer_badge}</span>'
+        chip_html += '</div>'
+        st.markdown(chip_html, unsafe_allow_html=True)
 
         st.markdown("### 🔗 View Original Papers on PubMed")
         titles = get_paper_titles(id_list)
@@ -490,22 +568,23 @@ if st.button("Search and Summarize"):
         for i, citation in enumerate(citations, start=1):
             st.markdown(f"{i}. {citation}")
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
         # --- PDF download button ---
-        pdf_path = save_summary_as_pdf(topic, summary)
-        with open(pdf_path, "rb") as f:
-            st.download_button(
-                label="📄 Download as PDF",
-                data=f,
-                file_name=pdf_path.split("/")[-1],
-                mime="application/pdf",
-            )
+        try:
+            pdf_path = save_summary_as_pdf(topic, summary)
+            with open(pdf_path, "rb") as f:
+                st.download_button(
+                    label="📄 Download as PDF",
+                    data=f,
+                    file_name=pdf_path.split("/")[-1],
+                    mime="application/pdf",
+                )
+        except Exception as e:
+            st.warning(f"PDF generation failed, but your summary above is still available. ({e})")
 
         # --- Follow-up question ---
         st.markdown("### 💬 Ask a follow-up question")
         followup = st.text_input("e.g. 'Which of these had the largest sample size?'", key=f"followup_{topic}")
-        if st.button("Ask Claude", key=f"ask_{topic}"):
+        if st.button("Ask", key=f"ask_{topic}"):
             if followup.strip():
                 with st.spinner("Thinking..."):
                     followup_prompt = f"""Based on this earlier summary of PubMed research on "{topic}":
@@ -513,9 +592,18 @@ if st.button("Search and Summarize"):
 {summary}
 
 Answer this follow-up question concisely: {followup}"""
-                    followup_response = client.messages.create(
-                        model="claude-sonnet-4-5",
-                        max_tokens=500,
-                        messages=[{"role": "user", "content": followup_prompt}]
-                    )
-                    st.markdown(followup_response.content[0].text)
+                    if using_nemotron:
+                        followup_completion = nvidia_client.chat.completions.create(
+                            model="nvidia/nemotron-3-ultra-550b-a55b",
+                            messages=[{"role": "user", "content": followup_prompt}],
+                            max_tokens=500,
+                            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                        )
+                        st.markdown(followup_completion.choices[0].message.content)
+                    else:
+                        followup_response = client.messages.create(
+                            model="claude-sonnet-4-5",
+                            max_tokens=500,
+                            messages=[{"role": "user", "content": followup_prompt}]
+                        )
+                        st.markdown(followup_response.content[0].text)

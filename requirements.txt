@@ -1,6 +1,7 @@
 streamlit
-anthropic
 requests
+anthropic
 python-dotenv
-bcrypt
 fpdf2
+openai
+bcrypt

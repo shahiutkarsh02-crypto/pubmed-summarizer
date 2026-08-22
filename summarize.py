@@ -1,18 +1,26 @@
 # summarize.py
-# This script searches PubMed, then asks Claude (Anthropic AI) to
-# produce a structured summary of the results.
+# This script searches PubMed, then asks an AI model (Claude or
+# NVIDIA Nemotron 3 Ultra) to produce a structured summary of the results.
 
 import os
 import re
 import requests
 from dotenv import load_dotenv
 import anthropic
+from openai import OpenAI
 
-# Load the secret key from our .env file into memory
+# Load the secret keys from our .env file into memory
 load_dotenv()
 
 # Create a "client" - this is our connection to Claude's API
 client = anthropic.Anthropic()  # it automatically reads ANTHROPIC_API_KEY
+
+# Create a "client" for NVIDIA's Nemotron 3 Ultra - this uses the
+# OpenAI-compatible library since NVIDIA's API speaks the same format
+nvidia_client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.environ.get("NVIDIA_API_KEY"),
+)
 
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 
@@ -210,12 +218,13 @@ def clean_abstract_text(raw_text):
     return cleaned_text.strip()
 
 
-def summarize_with_claude(topic, papers_text, num_papers):
+def build_summary_prompt(topic, papers_text, num_papers):
     """
-    Send the raw PubMed text to Claude and ask for a clean,
-    structured summary.
+    Builds the shared pharma-specific summarization prompt used by
+    both Claude and Nemotron, so the two models are asked the exact
+    same thing in the exact same way.
     """
-    prompt = f"""You are a clinical pharmacy research assistant helping a pharmacy
+    return f"""You are a clinical pharmacy research assistant helping a pharmacy
 professional quickly evaluate recent research. Below are the {num_papers} most
 recent PubMed abstracts on the topic "{topic}".
 
@@ -236,6 +245,14 @@ Here are the raw abstracts:
 {papers_text}
 """
 
+
+def summarize_with_claude(topic, papers_text, num_papers):
+    """
+    Send the raw PubMed text to Claude and ask for a clean,
+    structured summary.
+    """
+    prompt = build_summary_prompt(topic, papers_text, num_papers)
+
     message = client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=2000,
@@ -245,6 +262,27 @@ Here are the raw abstracts:
     )
 
     return message.content[0].text
+
+
+def summarize_with_nemotron(topic, papers_text, num_papers):
+    """
+    Send the raw PubMed text to NVIDIA's Nemotron 3 Ultra (free tier)
+    and ask for the same clean, structured summary Claude produces.
+    """
+    prompt = build_summary_prompt(topic, papers_text, num_papers)
+
+    completion = nvidia_client.chat.completions.create(
+        model="nvidia/nemotron-3-ultra-550b-a55b",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.5,
+        top_p=0.95,
+        max_tokens=2000,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+
+    return completion.choices[0].message.content
 
 
 def save_summary(topic, summary):
@@ -288,18 +326,20 @@ def save_summary_as_pdf(topic, summary):
     filename = f"summaries/{safe_topic}_{timestamp}.pdf"
 
     pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
-    pdf.multi_cell(0, 10, "PubMed AI Summary")
+    pdf.multi_cell(0, 10, "PubMed AI Summary", new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font("Helvetica", "", 11)
-    pdf.multi_cell(0, 8, f"Topic: {topic}")
-    pdf.multi_cell(0, 8, f"Generated: {timestamp}")
+    pdf.multi_cell(0, 8, f"Topic: {topic}", new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 8, f"Generated: {timestamp}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     pdf.set_font("Helvetica", "", 11)
     safe_summary = summary.encode("latin-1", "replace").decode("latin-1")
-    pdf.multi_cell(0, 7, safe_summary)
+    pdf.multi_cell(0, 7, safe_summary, new_x="LMARGIN", new_y="NEXT")
 
     pdf.output(filename)
     return filename
